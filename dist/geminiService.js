@@ -4,7 +4,7 @@ exports.analyzeBloodPressure = exports.generateHealthTip = exports.generateExerc
 const genai_1 = require("@google/genai");
 const config_1 = require("./config");
 const ai = new genai_1.GoogleGenAI({ apiKey: config_1.GEMINI_API_KEY });
-const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 25000);
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 30000);
 const DEFAULT_EXERCISE = {
     name: '隐形椅子',
     description: '背靠墙壁下蹲，像坐在一把隐形的椅子上，坚持 45 秒后缓慢站起，重复 3 组。',

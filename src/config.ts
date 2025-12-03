@@ -10,7 +10,7 @@ const required = (value: string | undefined, name: string): string => {
 };
 
 export const PORT = Number(process.env.PORT || 4000);
-export const GEMINI_API_KEY = required(process.env.GEMINI_API_KEY, 'GEMINI_API_KEY');
+export const QWEN_API_KEY = required(process.env.QWEN_API_KEY, 'QWEN_API_KEY');
 export const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
