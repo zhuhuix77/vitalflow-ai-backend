@@ -1,10 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.analyzeBloodPressure = exports.generateHealthTip = exports.generateExercise = void 0;
-const genai_1 = require("@google/genai");
 const config_1 = require("./config");
-const ai = new genai_1.GoogleGenAI({ apiKey: config_1.GEMINI_API_KEY });
-const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 30000);
+const DASH_SCOPE_CHAT_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+const DASH_SCOPE_IMAGE_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+const QWEN_TEXT_MODEL = process.env.QWEN_TEXT_MODEL || process.env.QWEN_MODEL || 'qwen3-max';
+const QWEN_IMAGE_MODEL = process.env.QWEN_IMAGE_MODEL || QWEN_TEXT_MODEL;
+const QWEN_IMAGE_SIZE = process.env.QWEN_IMAGE_SIZE || '1664*928';
+const QWEN_TIMEOUT_MS = Number(process.env.QWEN_TIMEOUT_MS || 30000);
 const DEFAULT_EXERCISE = {
     name: '隐形椅子',
     description: '背靠墙壁下蹲，像坐在一把隐形的椅子上，坚持 45 秒后缓慢站起，重复 3 组。',
@@ -21,46 +24,8 @@ const createFallbackAnalysis = () => ({
 const withTimeout = (promise) => {
     return Promise.race([
         promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini 调用超时')), GEMINI_TIMEOUT_MS))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Qwen 调用超时')), QWEN_TIMEOUT_MS))
     ]);
-};
-const toContents = (text) => [
-    {
-        role: 'user',
-        parts: [{ text }]
-    }
-];
-const extractText = (result) => {
-    if (!result)
-        return '';
-    if (typeof result.text === 'function') {
-        try {
-            return result.text() || '';
-        }
-        catch (error) {
-            console.warn('Failed to read response.text()', error);
-        }
-    }
-    if (typeof result.text === 'string') {
-        return result.text.trim();
-    }
-    const parts = result.candidates?.[0]?.content?.parts;
-    if (Array.isArray(parts)) {
-        const textPart = parts.find((part) => part.text);
-        return textPart?.text?.trim() || '';
-    }
-    return '';
-};
-const extractInlineImage = (result) => {
-    const parts = result.candidates?.[0]?.content?.parts;
-    if (!parts)
-        return undefined;
-    const inline = parts.find((part) => part.inlineData?.data);
-    if (inline?.inlineData?.data) {
-        const mime = inline.inlineData.mimeType || 'image/png';
-        return `data:${mime};base64,${inline.inlineData.data}`;
-    }
-    return undefined;
 };
 const sanitizeJsonPayload = (text) => {
     return text
@@ -73,41 +38,113 @@ const parseJson = (text) => {
     const cleaned = sanitizeJsonPayload(text);
     return JSON.parse(cleaned);
 };
-const generateExercise = async (context) => {
-    const schema = {
-        type: genai_1.Type.OBJECT,
-        properties: {
-            name: { type: genai_1.Type.STRING },
-            description: { type: genai_1.Type.STRING },
-            durationSeconds: { type: genai_1.Type.NUMBER },
-            difficulty: { type: genai_1.Type.STRING },
-            funFact: { type: genai_1.Type.STRING }
-        },
-        required: ['name', 'description', 'durationSeconds', 'difficulty', 'funFact']
+const extractMessageText = (payload) => {
+    const content = payload.choices?.[0]?.message?.content;
+    if (typeof content === 'string') {
+        return content.trim();
+    }
+    if (Array.isArray(content)) {
+        const textChunk = content.find((chunk) => chunk.type === 'text');
+        return textChunk?.text?.trim() || '';
+    }
+    return '';
+};
+const extractImageUrl = (payload) => {
+    const choices = payload.output?.choices;
+    console.log(choices);
+    const candidate = choices?.[0];
+    if (!candidate) {
+        return undefined;
+    }
+    if (candidate.message) {
+        const img = candidate.message.content?.[0];
+        if (img?.image) {
+            return img.image;
+        }
+    }
+    return undefined;
+};
+const callQwenChat = async (messages, options = {}) => {
+    const body = {
+        model: QWEN_TEXT_MODEL,
+        messages
     };
+    if (typeof options.temperature === 'number') {
+        body.temperature = options.temperature;
+    }
+    if (options.responseFormat) {
+        body.response_format = { type: options.responseFormat };
+    }
+    const response = await withTimeout(fetch(DASH_SCOPE_CHAT_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config_1.QWEN_API_KEY}`
+        },
+        body: JSON.stringify(body)
+    }));
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Qwen 请求失败：${response.status} ${errorText}`);
+    }
+    const data = (await response.json());
+    const text = extractMessageText(data);
+    if (!text) {
+        throw new Error('Qwen 返回内容为空');
+    }
+    return text;
+};
+const callQwenImage = async (prompt) => {
+    const body = {
+        model: QWEN_IMAGE_MODEL,
+        input: {
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            text: prompt
+                        }
+                    ]
+                }
+            ]
+        },
+        parameters: {
+            size: QWEN_IMAGE_SIZE,
+            n: 1
+        }
+    };
+    const response = await withTimeout(fetch(DASH_SCOPE_IMAGE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config_1.QWEN_API_KEY}`
+        },
+        body: JSON.stringify(body)
+    }));
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`Qwen 图像请求失败：${response.status} ${errorText}`);
+    }
+    const data = (await response.json());
+    return extractImageUrl(data);
+};
+const generateExercise = async (context) => {
     try {
-        const response = await withTimeout(ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: toContents(`为一位${context}生成一个可以在工位完成的趣味微运动。使用简短的中文返回 JSON，包含 name、description、durationSeconds、difficulty、funFact，语气轻松，时长 60-120 秒。`),
-            responseMimeType: 'application/json',
-            responseSchema: schema,
-            generationConfig: {
-                temperature: 1.05
+        const text = await callQwenChat([
+            {
+                role: 'system',
+                content: '你是一名擅长设计工位微运动的健身教练，只能用简体中文输出 JSON 对象。'
+            },
+            {
+                role: 'user',
+                content: `为一位${context}生成一个可以在工位完成的趣味微运动。字段需包含 name、description、durationSeconds、difficulty、funFact，且时长控制在 60-120 秒。`
             }
-        }));
-        const text = extractText(response);
+        ], { responseFormat: 'json_object', temperature: 0.7 });
         const exercise = parseJson(text);
         try {
-            const illustration = await withTimeout(ai.models.generateContent({
-                model: 'gemini-2.5-flash-image',
-                contents: toContents(`Draw a minimalist memphis-style flat illustration for: ${exercise.name}: ${exercise.description}. White background, indigo palette,Do not include any Chinese text in the picture.`),
-                generationConfig: {
-                    imageGenerationConfig: {
-                        aspectRatio: '4:3'
-                    }
-                }
-            }));
-            const imageUrl = extractInlineImage(illustration);
+            const illustrationPrompt = `Draw a clean flat illustration that shows "${exercise.name}" (${exercise.description}). Style: memphis, white background, indigo accent, no Chinese text.`;
+            const imageUrl = await callQwenImage(illustrationPrompt);
             if (imageUrl) {
                 exercise.imageUrl = imageUrl;
             }
@@ -125,15 +162,17 @@ const generateExercise = async (context) => {
 exports.generateExercise = generateExercise;
 const generateHealthTip = async () => {
     try {
-        const response = await withTimeout(ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: toContents('Give me one short, witty, and motivating tip about lowering blood pressure or reducing sitting time. Keep it under 30 words. Answer in Chinese (Simplified).'),
-            generationConfig: {
-                temperature: 0.9
+        const tip = await callQwenChat([
+            {
+                role: 'system',
+                content: '你是一名活泼幽默的健康教练，回答要简短、鼓励性、用简体中文。'
+            },
+            {
+                role: 'user',
+                content: '请给出一句 30 字以内、关于降低血压或减少久坐的小贴士，语气轻松。'
             }
-        }));
-        const text = extractText(response);
-        return text.trim() || FALLBACK_TIP;
+        ], { temperature: 0.8 });
+        return tip.trim() || FALLBACK_TIP;
     }
     catch (error) {
         console.warn('generateHealthTip fallback', error);
@@ -154,22 +193,17 @@ const analyzeBloodPressure = async (readings) => {
         .slice(-10)
         .map((reading) => `${new Date(reading.timestamp).toLocaleDateString()}: ${reading.systolic}/${reading.diastolic}`)
         .join('\n');
-    const schema = {
-        type: genai_1.Type.OBJECT,
-        properties: {
-            trend: { type: genai_1.Type.STRING },
-            advice: { type: genai_1.Type.STRING }
-        },
-        required: ['trend', 'advice']
-    };
     try {
-        const response = await withTimeout(ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: toContents(`你是一名心血管健康教练，分析以下血压读数并给出趋势和一条具体建议，语气积极，使用简体中文：\n${dataString}`),
-            responseMimeType: 'application/json',
-            responseSchema: schema
-        }));
-        const text = extractText(response);
+        const text = await callQwenChat([
+            {
+                role: 'system',
+                content: '你是一名心血管健康教练，只能返回 JSON，对血压趋势给出积极的分析和建议。'
+            },
+            {
+                role: 'user',
+                content: `请根据下面的血压记录，输出 trend 和 advice 两个字段：\n${dataString}`
+            }
+        ], { responseFormat: 'json_object', temperature: 0.4 });
         const parsed = parseJson(text);
         return { ...parsed, generatedAt: Date.now() };
     }

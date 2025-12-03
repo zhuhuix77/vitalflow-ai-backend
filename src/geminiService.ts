@@ -54,15 +54,21 @@ type DashScopeResponse = {
 };
 
 type DashScopeImageDatum = {
-  url?: string;
-  b64_json?: string;
-  mime_type?: string;
+  finish_reason?: string;
+  message?: {
+    role?: string;
+    content?:  DashScopeImage[];
+
+  };
+};
+
+type DashScopeImage = {
+  image: string;
 };
 
 type DashScopeImageResponse = {
-  data?: DashScopeImageDatum[];
   output?: {
-    results?: DashScopeImageDatum[];
+    choices?: DashScopeImageDatum[];
   };
 };
 
@@ -92,22 +98,20 @@ const extractMessageText = (payload: DashScopeResponse): string => {
 };
 
 const extractImageUrl = (payload: DashScopeImageResponse): string | undefined => {
-  //console.log(payload.output.choices);
-  const candidate = payload.output.choices?.[0] ;
+  const choices = payload.output?.choices;
+  console.log(choices);
+  const candidate = choices?.[0];
   if (!candidate) {
     return undefined;
   }
 
   if (candidate.message) {
-    const img= candidate.message.content?.[0];
-    //console.log(img)
-    if (img && img.image) {
-
+    const img = candidate.message.content?.[0];
+    if (img?.image) {
       return img.image;
-
     }
   }
- 
+
   return undefined;
 };
 
