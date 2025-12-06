@@ -211,7 +211,7 @@ export const generateExercise = async (context: string): Promise<Exercise> => {
           content: `为一位${context}生成一个可以在工位完成的全身趣味微运动。字段需包含 name、description、durationSeconds、difficulty、funFact，且时长控制在 60-120 秒。`
         }
       ],
-      { responseFormat: 'json_object', temperature: 0.7,top_p: 0.9,top_k:40}
+      { responseFormat: 'json_object', temperature: 0.7}
     );
 
     const exercise = parseJson<Exercise>(text);
