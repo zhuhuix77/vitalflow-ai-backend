@@ -204,17 +204,19 @@ export const generateExercise = async (context: string): Promise<Exercise> => {
         {
           role: 'system',
           content:
-            '你是一名擅长设计工位微运动的健身教练，只能用简体中文输出 JSON 对象。'
+            '你是一名擅长设计工位微运动的健身教练，能设计出随机多样的趣味全身微运动，且不要与上一次生成的运动相同，只能用简体中文输出 JSON 对象。'
         },
         {
           role: 'user',
-          content: `为一位${context}生成一个可以在工位完成的趣味微运动。字段需包含 name、description、durationSeconds、difficulty、funFact，且时长控制在 60-120 秒。`
+          content: `为一位${context}生成一个可以在工位完成的全身趣味微运动。字段需包含 name、description、durationSeconds、difficulty、funFact，且时长控制在 60-120 秒。`
         }
       ],
-      { responseFormat: 'json_object', temperature: 0.9 }
+      { responseFormat: 'json_object', temperature: 0.7,top_p: 0.9,top_k:40}
     );
 
     const exercise = parseJson<Exercise>(text);
+
+    console.log(exercise)
 
     try {
       const illustrationPrompt = `Draw a clean flat illustration that shows "${exercise.name}" (${exercise.description}). Style: memphis, white background, indigo accent, no Chinese text.`;
